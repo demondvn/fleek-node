@@ -9,5 +9,7 @@
     EMAIL="mp@gmail.com" DOMAINS="monpham.org" bash init-letsencrypt.sh
 ## Run
     docker-compose up -d
+## Check
+    https://<ip>/stub_status
 ## Backup
     cat /root/.ursa/keystore/default.pem
