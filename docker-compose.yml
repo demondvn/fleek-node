@@ -1,0 +1,94 @@
+version: '3'
+
+services:
+  nginx:
+    image: nginx:latest
+    restart: unless-stopped
+    command: "/bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g \"daemon off;\"'"
+    volumes:
+      - ./data/nginx:/etc/nginx/conf.d
+      - ./data/certbot/conf:/etc/letsencrypt
+      - ./data/certbot/www:/var/www/certbot
+      - ./data/nginx/cache:/cache:rw
+    ports:
+      - "80:80"
+      - "443:443"
+    expose:
+      - 80
+    depends_on:
+      - certbot
+
+  nginxexporter:
+    image: fish/nginx-exporter
+    command:
+    - '-nginx.scrape_uri=http://nginx:80/stub_status'
+    expose:
+      - 9113
+    depends_on:
+      - nginx
+
+  certbot:
+    image: certbot/certbot
+    restart: unless-stopped
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    volumes:
+      - ./data/certbot/conf:/etc/letsencrypt
+      - ./data/certbot/www:/var/www/certbot
+
+  node-exporter:
+    image: prom/node-exporter
+    container_name: node-exporter
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    restart: unless-stopped
+    expose:
+      - 9100
+    labels:
+      org.label-schema.group: "monitoring"
+
+
+  ursa:
+    # default image name which matches suggested docker run version for cache
+    image: ursa
+    build:
+      context: ../../.
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - "6009:6009"
+    expose:
+      # 4069 TCP, used for HTTP RPC, REST, and metrics
+      - "4069"
+      # 6009 TCP and UDP, used by the P2P protocol running the network
+      - "6009"
+    volumes:
+      - ${HOME}/.ursa/:/root/.ursa/:rw
+    healthcheck:
+      test: |
+        curl http://localhost:4069/ping || (
+          config_path=./docker/full-node/docker-compose.yml
+
+          if [[ ! -f "$config_path" && -f "docker-compose.yml" ]]; then
+            printf "%s\n" "🤖 Found docker-compose.yml in current work dir and will override the default path."
+
+            config_path="docker-compose.yml"
+          fi
+
+          if [[ ! -f "$config_path" ]]; then
+            printf "%s\n" "👹 Oops! The Ursa service should be restarted but we couldn't locate the Stack configuration file. Have you started the Stack from the project root?"
+
+            exit 1
+          fi
+
+          docker-compose -f "$config_path" restart ursa
+        )
+      interval: 5m
+      timeout: 10s
+      retries: 3
